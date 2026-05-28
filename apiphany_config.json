@@ -1,0 +1,135 @@
+{
+    "api_config": [
+        {
+            "entity_name": "jsonplaceholder",
+            "certificates": {
+                "cert": "/path/to/cert.pem",
+                "key": "/path/to/key.pem",
+                "pem": "/path/to/fullchain.pem"
+            },
+            "client_credentials": {
+                "client_id": "dummy_client_id",
+                "client_secret": "dummy_client_secret",
+                "username": "dummy_user",
+                "password": "dummy_password"
+            },
+            "retry_config": {
+                "total_retries": 3,
+                "backoff_factor": 1.0,
+                "requests_per_second": 10
+            },
+            "auth_strategy": {
+                "type": "oauth2_client_credentials",
+                "method": "POST",
+                "url": "https://api.example.com/oauth/token",
+                "headers": {
+                    "Content-Type": "application/x-www-form-urlencoded"
+                },
+                "payload": {
+                    "grant_type": "client_credentials",
+                    "client_id": "{{client_id}}",
+                    "client_secret": "{{client_secret}}"
+                },
+                "token_extractor_path": "access_token"
+            },
+            "post_process": "/path/to/custom_post_process.py",
+            "api_list": [
+                {
+                    "api_identifier": "get_users",
+                    "api_name": "Get All Users",
+                    "method": "GET",
+                    "url": "https://jsonplaceholder.typicode.com/users",
+                    "auth_type": "None",
+                    "extractor_config": {
+                        "response_data_extractor": "",
+                        "json_extract_config": {
+                            "desired_columns": ["id", "name", "email", "company.name"],
+                            "simplify_columns": true
+                        }
+                    },
+                    "chained_request": {
+                        "child_api_identifier": "get_user_posts",
+                        "key_mapping": {
+                            "id": "userId"
+                        },
+                        "max_concurrent_requests": 5,
+                        "batch_size": 1
+                    }
+                },
+                {
+                    "api_identifier": "get_user_posts",
+                    "api_name": "Get Posts for Users",
+                    "method": "GET",
+                    "url": "https://jsonplaceholder.typicode.com/posts",
+                    "auth_type": "None",
+                    "query_params": {
+                        "userId": "{{userId}}"
+                    },
+                    "chained_request": {
+                        "child_api_identifier": "get_post_comments",
+                        "key_mapping": {
+                            "id": "postId"
+                        },
+                        "max_concurrent_requests": 10,
+                        "batch_size": 1
+                    }
+                },
+                {
+                    "api_identifier": "get_post_comments",
+                    "api_name": "Get Comments for Posts",
+                    "method": "GET",
+                    "url": "https://jsonplaceholder.typicode.com/comments",
+                    "auth_type": "None",
+                    "query_params": {
+                        "postId": "{{postId}}"
+                    },
+                    "export_config": {
+                        "save_output": true,
+                        "output_type": "flattened",
+                        "target": {
+                            "type": "sql",
+                            "location": "sqlite:///jsonplaceholder_comments.db",
+                            "table_name": "comments",
+                            "if_exists": "replace"
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "entity_name": "rick_and_morty",
+            "api_list": [
+                {
+                    "api_identifier": "get_characters",
+                    "api_name": "Get Characters (Pagination & State Tracking Demo)",
+                    "method": "GET",
+                    "url": "https://rickandmortyapi.com/api/character",
+                    "auth_type": "None",
+                    "pagination": {
+                        "type": "page_based",
+                        "page_size": 20,
+                        "page_key": "page",
+                        "size_key": "limit",
+                        "stop_condition": "no_data"
+                    },
+                    "extractor_config": {
+                        "response_data_extractor": "results",
+                        "json_extract_config": {
+                            "desired_columns": [
+                                "id",
+                                "name",
+                                "status",
+                                "species",
+                                "location.name"
+                            ],
+                            "simplify_columns": true
+                        }
+                    },
+                    "state_tracking": {
+                        "incremental_key": "id"
+                    }
+                }
+            ]
+        }
+    ]
+}
