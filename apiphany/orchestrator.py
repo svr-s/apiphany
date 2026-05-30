@@ -18,6 +18,11 @@ from json_extract_pandas import extract_json
 
 logger = get_logger("Apiphany")
 
+class CircuitBreakerOpenException(Exception):
+    """Raised when an API circuit breaker trips due to excessive failures."""
+    pass
+
+
 class APIOrchestrator:
     """
     The core execution engine for the Apiphany API Orchestrator.
@@ -92,6 +97,11 @@ class APIOrchestrator:
         rps = retry_config.requests_per_second if retry_config else 10
         self.limiter = AsyncLimiter(rps, 1)
         self.access_token = None
+        
+        # Enterprise Upgrades State
+        self.oauth_lock = asyncio.Lock()
+        self._circuit_failures = {}
+        self._circuit_open_until = {}
 
     def __del__(self):
         """Ensures any temporary certificate files downloaded from S3 are deleted when the orchestrator is destroyed."""
@@ -169,7 +179,33 @@ class APIOrchestrator:
             
         return headers
 
-    async def _make_request(self, method: str, url: str, headers: Dict, params: Dict = None, payload: Dict = None, graphql_query: str = None):
+    async def _refresh_oauth_token(self, api_def):
+        """Acquires a lock to prevent stampedes and fetches a new OAuth2 access token."""
+        async with self.oauth_lock:
+            oauth = api_def.oauth2_config
+            if not oauth: return
+            
+            token_url = oauth.token_url
+            client_id = resolve_template(f"{{{{{oauth.client_id_key}}}}}", self.client_credentials)
+            client_secret = resolve_template(f"{{{{{oauth.client_secret_key}}}}}", self.client_credentials)
+            
+            data = {
+                "grant_type": oauth.grant_type,
+                "client_id": client_id,
+                "client_secret": client_secret
+            }
+            logger.info("Exchanging OAuth2 token...", extra={"token_url": token_url})
+            try:
+                resp = await self.client.post(token_url, data=data)
+                resp.raise_for_status()
+                token_data = resp.json()
+                self.access_token = token_data.get("access_token")
+                logger.info("OAuth2 token successfully refreshed.")
+            except Exception as e:
+                logger.error(f"Failed to refresh OAuth2 token: {e}")
+                raise e
+
+    async def _make_request(self, api_def, method: str, url: str, headers: Dict, params: Dict = None, payload: Dict = None, graphql_query: str = None):
         """
         Executes a single HTTP request natively using `httpx`.
         
@@ -180,6 +216,19 @@ class APIOrchestrator:
             method = "POST"
             payload = {"query": graphql_query}
             
+        api_id = api_def.api_identifier
+        cb_config = api_def.circuit_breaker
+        rl_config = api_def.rate_limit_config
+        
+        # Circuit Breaker Pre-Check
+        if cb_config:
+            import time
+            open_until = self._circuit_open_until.get(api_id, 0)
+            if time.time() < open_until:
+                raise CircuitBreakerOpenException(f"Circuit open for {api_id}. Failing fast.")
+            elif open_until != 0:
+                self._circuit_open_until[api_id] = 0 # Half-open state
+                
         retry_config = self.api_config_model.retry_config
         retries = retry_config.total_retries if retry_config else 3
         
@@ -187,14 +236,49 @@ class APIOrchestrator:
             async with self.limiter:
                 try:
                     response = await self.client.request(method, url, headers=headers, params=params, json=payload)
+                    
+                    # Circuit Breaker Reset on success
+                    if cb_config:
+                        self._circuit_failures[api_id] = 0
+                        
+                    # Smart Throttle
+                    if rl_config and rl_config.remaining_header in response.headers:
+                        try:
+                            remaining = int(response.headers[rl_config.remaining_header])
+                            if remaining <= 0:
+                                reset_val = response.headers.get(rl_config.reset_header)
+                                if reset_val:
+                                    import time
+                                    reset_val_float = float(reset_val)
+                                    sleep_time = max(0, reset_val_float - time.time()) if reset_val_float > 1e9 else reset_val_float
+                                    logger.warning(f"Smart Throttle active. Sleeping for {sleep_time}s.")
+                                    await asyncio.sleep(sleep_time)
+                        except Exception as e:
+                            logger.error(f"Failed to parse rate limit headers: {e}")
+
                     response.raise_for_status()
                     return response.json()
                 except httpx.HTTPStatusError as e:
+                    if e.response.status_code == 401 and api_def.oauth2_config:
+                        logger.warning(f"401 Unauthorized for {api_id}. Triggering OAuth2 refresh.")
+                        await self._refresh_oauth_token(api_def)
+                        headers = await self._build_auth_headers(api_def) # Update auth header
+                        continue
+                        
                     if e.response.status_code == 429:
                         retry_after = int(e.response.headers.get("Retry-After", 2))
                         logger.warning("Rate limited.", extra={"url": url, "retry_after": retry_after})
                         await asyncio.sleep(retry_after)
                     elif e.response.status_code in [500, 502, 503, 504]:
+                        if cb_config:
+                            import time
+                            fails = self._circuit_failures.get(api_id, 0) + 1
+                            self._circuit_failures[api_id] = fails
+                            if fails >= cb_config.failure_threshold:
+                                self._circuit_open_until[api_id] = time.time() + cb_config.recovery_timeout_seconds
+                                logger.error(f"Circuit breaker tripped for {api_id}! Fails: {fails}")
+                                raise CircuitBreakerOpenException(f"Circuit breaker tripped for {api_id}")
+                                
                         # Exponential Backoff execution
                         backoff_time = (2 ** attempt)
                         logger.warning("Server error. Retrying...", extra={"url": url, "status_code": e.response.status_code, "backoff": backoff_time})
@@ -258,7 +342,7 @@ class APIOrchestrator:
         
         if not pag_config:
             method = api_def.method or "GET"
-            json_resp = await self._make_request(method, base_url, headers, params=base_params, payload=payload, graphql_query=graphql_query)
+            json_resp = await self._make_request(api_def, method, base_url, headers, params=base_params, payload=payload, graphql_query=graphql_query)
             if post_process:
                 json_resp = self._run_post_process(json_resp, post_process)
             return self._process_response_data(json_resp, data_extractor)
@@ -279,7 +363,7 @@ class APIOrchestrator:
                 params[size_key] = str(page_size)
                 
                 method = api_def.method or "GET"
-                json_resp = await self._make_request(method, base_url, headers, params=params, payload=payload, graphql_query=graphql_query)
+                json_resp = await self._make_request(api_def, method, base_url, headers, params=params, payload=payload, graphql_query=graphql_query)
                 if post_process:
                     json_resp = self._run_post_process(json_resp, post_process)
                 records = self._process_response_data(json_resp, data_extractor)
@@ -301,7 +385,7 @@ class APIOrchestrator:
                 params[limit_key] = str(limit_val)
                 
                 method = api_def.method or "GET"
-                json_resp = await self._make_request(method, base_url, headers, params=params, payload=payload, graphql_query=graphql_query)
+                json_resp = await self._make_request(api_def, method, base_url, headers, params=params, payload=payload, graphql_query=graphql_query)
                 if post_process:
                     json_resp = self._run_post_process(json_resp, post_process)
                 records = self._process_response_data(json_resp, data_extractor)
@@ -310,6 +394,46 @@ class APIOrchestrator:
                 all_records.extend(records)
                 if stop_cond == "no_data" and len(records) < limit_val: break
                 offset += limit_val
+                
+        elif pag_type == "cursor_based":
+            cursor = None
+            cursor_path = pag_config.cursor_path
+            cursor_query_key = pag_config.cursor_query_key or "cursor"
+            
+            if not cursor_path:
+                raise ValueError("cursor_based pagination requires 'cursor_path' to be defined in config.")
+                
+            while True:
+                params = base_params.copy()
+                if cursor is not None:
+                    params[cursor_query_key] = str(cursor)
+                
+                method = api_def.method or "GET"
+                json_resp = await self._make_request(api_def, method, base_url, headers, params=params, payload=payload, graphql_query=graphql_query)
+                
+                # Extract next cursor before post-processing or data extraction strips the metadata
+                next_cursor = None
+                if isinstance(json_resp, dict):
+                    val = json_resp
+                    for k in cursor_path.split('.'):
+                        if isinstance(val, dict):
+                            val = val.get(k)
+                        else:
+                            val = None
+                            break
+                    next_cursor = val
+                
+                if post_process:
+                    json_resp = self._run_post_process(json_resp, post_process)
+                
+                records = self._process_response_data(json_resp, data_extractor)
+                if records:
+                    all_records.extend(records)
+                
+                if not next_cursor or next_cursor == cursor:
+                    break
+                cursor = next_cursor
+                
         else:
             raise NotImplementedError(f"Pagination type {pag_type} is not implemented.")
             

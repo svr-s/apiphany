@@ -13,7 +13,9 @@ class PaginationSchema(BaseModel):
         offset_key (str): The URL query parameter for offset-based pagination (default: "offset").
         limit_key (str): The URL query parameter for offset limits (default: "limit").
         limit_value (int): The amount to increment the offset by per page (default: 100).
-        stop_condition (str): Defines when pagination should cease (default: "no_data" - meaning when the returned payload is empty or smaller than the limit).
+        cursor_path (str): The dot-notation path to extract the next cursor from the JSON response (e.g., "meta.next_token").
+        cursor_query_key (str): The URL query parameter where the cursor should be injected (default: "cursor").
+        stop_condition (str): Defines when pagination should cease (default: "no_data").
     """
     type: str
     page_key: Optional[str] = "page"
@@ -22,6 +24,8 @@ class PaginationSchema(BaseModel):
     offset_key: Optional[str] = "offset"
     limit_key: Optional[str] = "limit"
     limit_value: Optional[int] = 100
+    cursor_path: Optional[str] = None
+    cursor_query_key: Optional[str] = "cursor"
     stop_condition: Optional[str] = "no_data"
 
 
@@ -116,6 +120,30 @@ class ExportConfigSchema(BaseModel):
     target: Optional[ExportTargetSchema] = None
 
 
+class OAuth2ConfigSchema(BaseModel):
+    """
+    Configuration for automated OAuth2 token refresh flows.
+    """
+    token_url: str
+    client_id_key: str = "client_id"
+    client_secret_key: str = "client_secret"
+    grant_type: str = "client_credentials"
+
+class CircuitBreakerSchema(BaseModel):
+    """
+    Configuration for system resilience against failing downstream APIs.
+    """
+    failure_threshold: int = 10
+    recovery_timeout_seconds: int = 300
+
+class RateLimitSchema(BaseModel):
+    """
+    Configuration for dynamic rate-limit header parsing (Smart Throttle).
+    """
+    remaining_header: str = "x-ratelimit-remaining"
+    reset_header: str = "x-ratelimit-reset"
+
+
 class APISchema(BaseModel):
     """
     The core schema representing a single runnable API endpoint definition.
@@ -134,23 +162,29 @@ class APISchema(BaseModel):
         pagination (PaginationSchema): Configuration for handling automated page scrolling.
         extractor_config (ExtractorConfigSchema): Configuration for transforming the JSON response into a Pandas DataFrame.
         chained_request (ChainedRequestSchema): Configuration for automatically triggering a downstream child API.
-        state_tracking (StateTrackingSchema): Configuration for maintaining incremental high-watermarks.
-        export_config (ExportConfigSchema): Configuration for automated file/database saving.
+        state_tracking (StateTrackingSchema): Configuration for watermarking incremental data loads.
+        oauth2_config (OAuth2ConfigSchema): Configuration for auto-refreshing OAuth tokens.
+        circuit_breaker (CircuitBreakerSchema): Configuration for opening the circuit on cascading failures.
+        rate_limit_config (RateLimitSchema): Configuration for Smart Throttling.
     """
     api_identifier: str
-    api_name: str
-    method: str
+    api_name: Optional[str] = "Unnamed API"
+    method: Optional[str] = "GET"
     url: str
-    auth_type: str = "None"
-    api_key_name: Optional[str] = None
-    headers: Optional[Dict[str, str]] = Field(default_factory=dict)
-    query_params: Optional[Dict[str, str]] = Field(default_factory=dict)
+    auth_type: Optional[str] = "None"
+    api_key_name: Optional[str] = "x-api-key"
+    headers: Optional[Dict[str, str]] = None
+    query_params: Optional[Dict[str, str]] = None
     payload: Optional[Dict[str, Any]] = None
     graphql_query: Optional[str] = None
+    
     pagination: Optional[PaginationSchema] = None
     extractor_config: Optional[ExtractorConfigSchema] = None
     chained_request: Optional[ChainedRequestSchema] = None
     state_tracking: Optional[StateTrackingSchema] = None
+    oauth2_config: Optional[OAuth2ConfigSchema] = None
+    circuit_breaker: Optional[CircuitBreakerSchema] = None
+    rate_limit_config: Optional[RateLimitSchema] = None
     export_config: Optional[ExportConfigSchema] = None
 
 

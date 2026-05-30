@@ -5,11 +5,13 @@ Apiphany is an API orchestration engine. It transforms the chaotic process of ex
 ## Features
 - **Asynchronous Concurrency**: Built entirely on `httpx` and `asyncio`, the engine fires hundreds of concurrent requests simultaneously with minimal memory overhead.
 - **Strict Rate Limiting**: Built-in `aiolimiter` safely paces outgoing requests to ensure you never exceed API quotas, strictly adhering to your configured `requests_per_second`.
+- **Smart Throttling**: Dynamic rate-limit header parsing (e.g., `x-ratelimit-reset`) completely prevents 429 errors by pausing exactly until the reset window opens.
+- **Automated OAuth2**: Automatically intercepts `401 Unauthorized` responses, locks the thread, performs a token exchange, and retries the failed request seamlessly.
 - **Chained Requests**: Feed the extracted outputs of one API call as parameters into another dynamically (e.g., fetch Users -> Posts -> Comments).
 - **Deep Extraction**: Native integration with `json_extract_pandas` to extract, unpack, and normalize nested JSON responses into clean DataFrames.
 - **Incremental State Tracking**: Native `state.json` watermarking. Works locally or via S3 (`s3://bucket/state.json`) to persist the latest timestamps or IDs fetched.
 - **Secrets Management**: Dynamically fetch client credentials or API keys directly from AWS Secrets Manager using ARNs.
-- **Robust Failure Handling**: Automatic exponential backoff for server errors (`500`, `502`, `503`, `504`).
+- **Circuit Breakers**: System resilience mechanism that automatically opens the circuit and fails fast if downstream servers continuously return 5xx errors, protecting your pipeline.
 - **Cloud-Agnostic Logging**: Emits pure JSON logs using `python-json-logger` natively compatible with AWS CloudWatch and Datadog.
 
 ## Requirements
@@ -157,7 +159,20 @@ Apiphany automatically scrolls through pages until the payload is empty.
 }
 ```
 
+#### `cursor_based` Pagination
+For APIs that return a dynamic cursor or token for the next page.
+```json
+"pagination": {
+    "type": "cursor_based",
+    "cursor_path": "meta.pagination.next_token",
+    "cursor_query_key": "continuation_token"
+}
+```
+- **`cursor_path`**: The dot-notation path inside the API's raw JSON response to find the next cursor (e.g., `"paging.cursors.after"`).
+- **`cursor_query_key`**: The URL query parameter where the extracted cursor should be injected on the subsequent request (default: `"cursor"`).
+
 ---
+
 
 ### 4. Chained Requests
 
@@ -183,9 +198,8 @@ Dynamically feeds the output of this API into another child API.
 
 ---
 
-### 5. Extractor Configuration
-
-Defines how deeply nested API JSON is parsed and flattened into Pandas DataFrames. Powered by `json_extract_pandas`.
+### 5. Data Extraction (`extractor_config`)
+Define how nested API JSON responses should be flattened into Pandas DataFrames. Powered by `json_extract_pandas`.
 
 - **`response_data_extractor`** (`string`): Target JSON path to pluck the core array from the root response (e.g. `"data.results"`).
 - **`json_extract_config.record_path`** (`list`): Path to the nested array within the row to explode into multiple rows (e.g., `["line_items"]`).
@@ -252,6 +266,41 @@ Saves the highest watermark detected in a payload to skip historical downloads o
 }
 ```
 *When you run Apiphany, it scans the DataFrame for the highest `updated_at` and saves it. On your next run, you can inject it directly into the URL by putting `{{state_updated_at}}` in your `query_params`.*
+
+---
+
+### 8. Advanced Resilience & Security
+
+Apiphany features advanced architectural upgrades to ensure long-running extractions survive hostile API conditions.
+
+#### Smart Throttling (`rate_limit_config`)
+Dynamically parses rate limit headers and pauses the asynchronous loop to completely prevent `429 Too Many Requests` errors.
+```json
+"rate_limit_config": {
+    "remaining_header": "x-ratelimit-remaining",
+    "reset_header": "x-ratelimit-reset"
+}
+```
+
+#### Automated OAuth2 Exchange (`oauth2_config`)
+Automatically intercepts `401 Unauthorized` responses, fetches a new token, and seamlessly retries the failed request. Note: Ensure `auth_type` is set to `"Bearer"`.
+```json
+"oauth2_config": {
+    "token_url": "https://api.example.com/oauth/token",
+    "client_id_key": "client_id",
+    "client_secret_key": "client_secret",
+    "grant_type": "client_credentials"
+}
+```
+
+#### Circuit Breakers (`circuit_breaker`)
+Tracks consecutive server failures (5xx). If the threshold is crossed, the circuit "opens" and prevents any further requests from being made for the timeout duration, raising a `CircuitBreakerOpenException`.
+```json
+"circuit_breaker": {
+    "failure_threshold": 10,
+    "recovery_timeout_seconds": 300
+}
+```
 
 ---
 
