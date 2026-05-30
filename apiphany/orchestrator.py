@@ -237,7 +237,17 @@ class APIOrchestrator:
         elif isinstance(extracted, dict): return [extracted]
         return [{"value": extracted}]
 
-    async def _fetch_all_pages(self, api_def, base_url: str, base_params: Dict, headers: Dict, graphql_query: str = None) -> List[Dict]:
+    def _resolve_payload(self, payload: Any, context: Dict) -> Any:
+        """Recursively resolves templates within a JSON payload."""
+        if isinstance(payload, dict):
+            return {k: self._resolve_payload(v, context) for k, v in payload.items()}
+        elif isinstance(payload, list):
+            return [self._resolve_payload(item, context) for item in payload]
+        elif isinstance(payload, str):
+            return resolve_template(payload, context)
+        return payload
+
+    async def _fetch_all_pages(self, api_def, base_url: str, base_params: Dict, headers: Dict, payload: Dict = None, graphql_query: str = None) -> List[Dict]:
         """
         Manages automatic pagination (e.g. Page/Limit or Offset/Limit), continuously aggregating payloads 
         until the API stops returning data.
@@ -248,7 +258,7 @@ class APIOrchestrator:
         
         if not pag_config:
             method = api_def.method or "GET"
-            json_resp = await self._make_request(method, base_url, headers, params=base_params, graphql_query=graphql_query)
+            json_resp = await self._make_request(method, base_url, headers, params=base_params, payload=payload, graphql_query=graphql_query)
             if post_process:
                 json_resp = self._run_post_process(json_resp, post_process)
             return self._process_response_data(json_resp, data_extractor)
@@ -268,7 +278,8 @@ class APIOrchestrator:
                 params[page_key] = str(page)
                 params[size_key] = str(page_size)
                 
-                json_resp = await self._make_request("GET", base_url, headers, params=params, graphql_query=graphql_query)
+                method = api_def.method or "GET"
+                json_resp = await self._make_request(method, base_url, headers, params=params, payload=payload, graphql_query=graphql_query)
                 if post_process:
                     json_resp = self._run_post_process(json_resp, post_process)
                 records = self._process_response_data(json_resp, data_extractor)
@@ -289,7 +300,8 @@ class APIOrchestrator:
                 params[offset_key] = str(offset)
                 params[limit_key] = str(limit_val)
                 
-                json_resp = await self._make_request("GET", base_url, headers, params=params, graphql_query=graphql_query)
+                method = api_def.method or "GET"
+                json_resp = await self._make_request(method, base_url, headers, params=params, payload=payload, graphql_query=graphql_query)
                 if post_process:
                     json_resp = self._run_post_process(json_resp, post_process)
                 records = self._process_response_data(json_resp, data_extractor)
@@ -303,7 +315,7 @@ class APIOrchestrator:
             
         return all_records
 
-    async def execute(self, api_identifier: str, query_params: Dict[str, str] = None, path_params: Dict[str, str] = None, output_format: str = "flattened"):
+    async def execute(self, api_identifier: str, query_params: Dict[str, str] = None, path_params: Dict[str, str] = None, payload: Any = None, output_format: str = "flattened"):
         """
         The master entrypoint for executing an API call.
         
@@ -311,6 +323,7 @@ class APIOrchestrator:
             api_identifier (str): The unique ID of the endpoint to execute from the config JSON.
             query_params (Dict): Optional dynamic query parameters to inject.
             path_params (Dict): Optional dynamic URL template replacements.
+            payload (Any): Optional runtime payload to override the config file payload.
             output_format (str): "flattened" (Pandas DataFrame) or "raw" (Pure list of JSON dictionaries).
             
         Returns:
@@ -336,11 +349,16 @@ class APIOrchestrator:
             base_params = {k: resolve_template(v, context) for k, v in (api_def.query_params or {}).items()}
             base_params.update(query_params)
             
+            if payload is not None:
+                resolved_payload = payload
+            else:
+                resolved_payload = self._resolve_payload(api_def.payload, context) if api_def.payload else None
+            
             headers = await self._build_auth_headers(api_def)
             
             # Fetch root
             logger.info("Executing API", extra={"api": api_identifier, "url": url})
-            all_records = await self._fetch_all_pages(api_def, url, base_params, headers, graphql_query)
+            all_records = await self._fetch_all_pages(api_def, url, base_params, headers, resolved_payload, graphql_query)
             
             extract_config = None
             if api_def.extractor_config and api_def.extractor_config.json_extract_config:
