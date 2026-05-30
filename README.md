@@ -1,10 +1,10 @@
 # Apiphany
 
-Apiphany is a high-performance API orchestration engine. It transforms the chaotic process of extracting data from complex REST and GraphQL APIs into a clean, strictly-typed, and fully declarative workflow. Powered by `httpx` and `asyncio`, Apiphany tears through deeply chained API requests concurrently without ever triggering rate limits, handles massive multi-page payloads automatically, and seamlessly unpacks deeply nested JSON blobs into pristine Pandas DataFrames or SQL tables.
+Apiphany is an API orchestration engine. It transforms the chaotic process of extracting data from complex REST and GraphQL APIs into a clean, strictly-typed, and fully declarative workflow. Powered by `httpx` and `asyncio`, Apiphany tears through deeply chained API requests concurrently without ever triggering rate limits, handles massive multi-page payloads automatically, and seamlessly unpacks deeply nested JSON blobs into pristine Pandas DataFrames or SQL tables.
 
 ## Features
-- **Asynchronous Concurrency**: Built entirely on `httpx` and `asyncio`, the engine fires hundreds of concurrent requests simultaneously with near-zero memory footprint.
-- **Enterprise Rate Limiting**: Built-in `aiolimiter` ensures you never get IP banned. Strictly limits execution to `requests_per_second`.
+- **Asynchronous Concurrency**: Built entirely on `httpx` and `asyncio`, the engine fires hundreds of concurrent requests simultaneously with minimal memory overhead.
+- **Strict Rate Limiting**: Built-in `aiolimiter` safely paces outgoing requests to ensure you never exceed API quotas, strictly adhering to your configured `requests_per_second`.
 - **Chained Requests**: Feed the extracted outputs of one API call as parameters into another dynamically (e.g., fetch Users -> Posts -> Comments).
 - **Deep Extraction**: Native integration with `json_extract_pandas` to extract, unpack, and normalize nested JSON responses into clean DataFrames.
 - **Incremental State Tracking**: Native `state.json` watermarking. Works locally or via S3 (`s3://bucket/state.json`) to persist the latest timestamps or IDs fetched.
