@@ -48,8 +48,9 @@ import asyncio
 from apiphany import APIOrchestrator
 
 # 1. Initialize the Client
+# Supports .json, .json5, .yaml, and .yml configuration files natively!
 client = APIOrchestrator(
-    config_file="apiphany_config.json", 
+    config_file="apiphany_config.yaml", 
     entity_name="jsonplaceholder"
 )
 
