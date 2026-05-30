@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "apiphany"
-version = "3.0.0"
+version = "0.1.0"
 authors = [
     { name="Vatsa", email="228140210+svr-s@users.noreply.github.com" },
 ]
