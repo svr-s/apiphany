@@ -1,6 +1,6 @@
 # Apiphany
 
-Apiphany is an API orchestration engine. It transforms the chaotic process of extracting data from complex REST and GraphQL APIs into a clean, strictly-typed, and fully declarative workflow. Powered by `httpx` and `asyncio`, Apiphany tears through deeply chained API requests concurrently without ever triggering rate limits, handles massive multi-page payloads automatically, and seamlessly unpacks deeply nested JSON blobs into pristine Pandas DataFrames or SQL tables.
+Apiphany is a declarative API orchestration engine. It enables developers to define complex API workflows—including authentication, pagination, chained requests, rate limiting, state tracking, and response extraction—through a fully validated configuration model. Powered by `httpx` and `asyncio`, Apiphany executes API workflows concurrently and seamlessly unpacks deeply nested JSON blobs into structured Pandas DataFrames or SQL tables.
 
 ## Features
 - **Asynchronous Concurrency**: Built entirely on `httpx` and `asyncio`, the engine fires hundreds of concurrent requests simultaneously with minimal memory overhead.

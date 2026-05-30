@@ -1,0 +1,17 @@
+{
+    "api_config": [
+        {
+            "entity_name": "test_get",
+            "api_list": [
+                {
+                    "api_identifier": "get_users",
+                    "api_name": "Fetch Users",
+                    "method": "GET",
+                    "url": "https://jsonplaceholder.typicode.com/users",
+                    "auth_type": "None"
+                }
+            ],
+            "client_credentials": {}
+        }
+    ]
+}

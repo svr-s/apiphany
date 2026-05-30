@@ -1,0 +1,1 @@
+{"api_config": [{"entity_name": "test", "api_list": [{"api_identifier": "test_post", "api_name": "Test POST", "method": "POST", "url": "https://jsonplaceholder.typicode.com/posts", "payload": {"title": "foo", "body": "bar", "userId": "{{user_id}}"}}], "client_credentials": {"user_id": "123"}}]}
