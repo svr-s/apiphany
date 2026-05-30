@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "apiphany"
-version = "0.1.2"
+version = "0.1.3"
 authors = [
     { name="Vatsa", email="228140210+svr-s@users.noreply.github.com" },
 ]
@@ -20,7 +20,9 @@ dependencies = [
     "httpx>=0.24.0",
     "aiolimiter>=1.0.0",
     "pydantic>=2.0.0",
-    "python-json-logger>=2.0.0"
+    "python-json-logger>=2.0.0",
+    "pyyaml>=6.0",
+    "json5>=0.9.0"
 ]
 
 [project.urls]

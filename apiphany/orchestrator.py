@@ -1,4 +1,6 @@
 import json
+import json5
+import yaml
 import os
 import asyncio
 import tempfile
@@ -139,8 +141,15 @@ class APIOrchestrator:
 
     def _load_config(self) -> Dict:
         """Reads the core `apiphany_config.json` file and plucks the active entity."""
+        ext = os.path.splitext(self.config_file)[1].lower()
         with open(self.config_file, 'r') as f:
-            full_config = json.load(f)
+            if ext in ['.yaml', '.yml']:
+                full_config = yaml.safe_load(f)
+            elif ext == '.json5':
+                full_config = json5.load(f)
+            else:
+                full_config = json.load(f)
+                
             for entity in full_config.get("api_config", []):
                 if entity.get("entity_name") == self.entity_name:
                     return entity
@@ -151,10 +160,19 @@ class APIOrchestrator:
         if isinstance(client_credentials, dict):
             return client_credentials
         elif isinstance(client_credentials, str) and os.path.exists(client_credentials):
+            ext = os.path.splitext(client_credentials)[1].lower()
             with open(client_credentials, 'r') as f:
-                return json.load(f)
+                if ext in ['.yaml', '.yml']:
+                    return yaml.safe_load(f)
+                elif ext == '.json5':
+                    return json5.load(f)
+                else:
+                    return json.load(f)
         else:
-            return json.loads(client_credentials)
+            try:
+                return json5.loads(client_credentials)
+            except:
+                return json.loads(client_credentials)
 
     async def _build_auth_headers(self, api_def) -> Dict:
         """
