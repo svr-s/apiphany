@@ -1,0 +1,106 @@
+{
+    "api_config": [
+        {
+            "entity_name": "elaborate_example_api",
+            "client_credentials": {
+                "base_url": "https://api.example-enterprise.com/v2",
+                "api_key": "YOUR_RAW_API_KEY_HERE",
+                "client_id": "CLIENT_ID_LOCAL",
+                "client_secret": "CLIENT_SECRET_LOCAL"
+            },
+            "retry_config": {
+                "total_retries": 5,
+                "backoff_factor": 2.0,
+                "requests_per_second": 5
+            },
+            "auth_strategy": {
+                "type": "oauth2_client_credentials",
+                "method": "POST",
+                "url": "{{base_url}}/oauth/token",
+                "headers": {
+                    "Content-Type": "application/x-www-form-urlencoded"
+                },
+                "payload": {
+                    "grant_type": "client_credentials",
+                    "client_id": "{{client_id}}",
+                    "client_secret": "{{client_secret}}"
+                },
+                "token_extractor_path": "access_token"
+            },
+            "api_list": [
+                {
+                    "api_identifier": "get_parent_organizations",
+                    "api_name": "Fetch Top-Level Organizations",
+                    "method": "GET",
+                    "url": "{{base_url}}/organizations",
+                    "auth_type": "bearer",
+                    "pagination": {
+                        "type": "offset_based",
+                        "offset_key": "offset",
+                        "limit_key": "limit",
+                        "limit_value": 100,
+                        "stop_condition": "no_data",
+                        "total_records_path": "metadata.total_records",
+                        "max_concurrent_requests": 15
+                    },
+                    "extractor_config": {
+                        "response_data_extractor": "data.organizations",
+                        "json_extract_config": {
+                            "desired_columns": [
+                                "org_id",
+                                "name",
+                                "status",
+                                "metrics.annual_revenue",
+                                "metrics.employee_count"
+                            ],
+                            "simplify_columns": true
+                        }
+                    },
+                    "chained_request": {
+                        "child_api_identifier": "get_organization_users",
+                        "key_mapping": {
+                            "org_id": "target_org_id"
+                        },
+                        "max_concurrent_requests": 10,
+                        "batch_size": 1
+                    }
+                },
+                {
+                    "api_identifier": "get_organization_users",
+                    "api_name": "Fetch Users per Organization",
+                    "method": "GET",
+                    "url": "{{base_url}}/organizations/{{target_org_id}}/users",
+                    "auth_type": "bearer",
+                    "query_params": {
+                        "status": "active"
+                    },
+                    "pagination": {
+                        "type": "cursor_based",
+                        "cursor_key": "next_page_token",
+                        "extractor_path": "meta.next_token"
+                    },
+                    "extractor_config": {
+                        "response_data_extractor": "data.users",
+                        "json_extract_config": {
+                            "desired_columns": [
+                                "user_id",
+                                "email",
+                                "role",
+                                "last_login"
+                            ],
+                            "simplify_columns": true
+                        }
+                    },
+                    "export_config": {
+                        "save_output": true,
+                        "output_type": "flattened",
+                        "target": {
+                            "type": "local_csv",
+                            "location": "/tmp/output_users.csv"
+                        }
+                    }
+                }
+            ]
+        }
+    ]
+}

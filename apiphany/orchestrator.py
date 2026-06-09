@@ -397,21 +397,109 @@ class APIOrchestrator:
             limit_key = pag_config.limit_key or "limit"
             limit_val = pag_config.limit_value or 100
             
-            while True:
-                params = base_params.copy()
-                params[offset_key] = str(offset)
-                params[limit_key] = str(limit_val)
-                
-                method = api_def.method or "GET"
-                json_resp = await self._make_request(api_def, method, base_url, headers, params=params, payload=payload, graphql_query=graphql_query)
-                if post_process:
-                    json_resp = self._run_post_process(json_resp, post_process)
-                records = self._process_response_data(json_resp, data_extractor)
-                
-                if not records: break
+            params = base_params.copy()
+            params[offset_key] = str(offset)
+            params[limit_key] = str(limit_val)
+            
+            method = api_def.method or "GET"
+            json_resp = await self._make_request(api_def, method, base_url, headers, params=params, payload=payload, graphql_query=graphql_query)
+            
+            total_records_path = getattr(pag_config, 'total_records_path', None)
+            total_count = None
+            if total_records_path and isinstance(json_resp, dict):
+                val = json_resp
+                for k in total_records_path.split('.'):
+                    if isinstance(val, dict):
+                        val = val.get(k)
+                    else:
+                        val = None
+                        break
+                if isinstance(val, (int, float)) or (isinstance(val, str) and val.isdigit()):
+                    total_count = int(val)
+            
+            if post_process:
+                json_resp = self._run_post_process(json_resp, post_process)
+            records = self._process_response_data(json_resp, data_extractor)
+            
+            if records:
                 all_records.extend(records)
-                if stop_cond == "no_data" and len(records) < limit_val: break
-                offset += limit_val
+                
+            if total_count is not None and total_count > limit_val:
+                max_concurrency = getattr(pag_config, 'max_concurrent_requests', 10) or 10
+                semaphore = asyncio.Semaphore(max_concurrency)
+                
+                async def fetch_offset(curr_offset):
+                    async with semaphore:
+                        p = base_params.copy()
+                        p[offset_key] = str(curr_offset)
+                        p[limit_key] = str(limit_val)
+                        resp = await self._make_request(api_def, method, base_url, headers, params=p, payload=payload, graphql_query=graphql_query)
+                        if post_process:
+                            resp = self._run_post_process(resp, post_process)
+                        return self._process_response_data(resp, data_extractor)
+                
+                tasks = []
+                for curr_offset in range(limit_val, total_count, limit_val):
+                    tasks.append(fetch_offset(curr_offset))
+                
+                if tasks:
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+                    for res in results:
+                        if isinstance(res, Exception):
+                            logger.error(f"Concurrent offset fetch failed: {res}")
+                        elif res:
+                            all_records.extend(res)
+            else:
+                max_concurrency = getattr(pag_config, 'max_concurrent_requests', 10) or 10
+                semaphore = asyncio.Semaphore(max_concurrency)
+                
+                async def fetch_speculative_offset(curr_offset):
+                    async with semaphore:
+                        p = base_params.copy()
+                        p[offset_key] = str(curr_offset)
+                        p[limit_key] = str(limit_val)
+                        try:
+                            resp = await self._make_request(api_def, method, base_url, headers, params=p, payload=payload, graphql_query=graphql_query)
+                            if post_process:
+                                resp = self._run_post_process(resp, post_process)
+                            return self._process_response_data(resp, data_extractor)
+                        except httpx.HTTPStatusError as e:
+                            if e.response.status_code in [400, 404]:
+                                return []
+                            raise e
+
+                if records and not (stop_cond == "no_data" and len(records) < limit_val):
+                    offset += limit_val
+                    while True:
+                        tasks = []
+                        for i in range(max_concurrency):
+                            tasks.append(fetch_speculative_offset(offset + (i * limit_val)))
+                        
+                        results = await asyncio.gather(*tasks, return_exceptions=True)
+                        
+                        batch_records = []
+                        end_reached = False
+                        
+                        for res in results:
+                            if isinstance(res, Exception):
+                                logger.error(f"Speculative offset fetch failed: {res}")
+                                end_reached = True
+                                break
+                            elif not res:
+                                end_reached = True
+                                break
+                            else:
+                                batch_records.extend(res)
+                                if stop_cond == "no_data" and len(res) < limit_val:
+                                    end_reached = True
+                                    break
+                                    
+                        all_records.extend(batch_records)
+                        
+                        if end_reached:
+                            break
+                            
+                        offset += (max_concurrency * limit_val)
                 
         elif pag_type == "cursor_based":
             cursor = None

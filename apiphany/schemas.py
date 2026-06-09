@@ -16,6 +16,8 @@ class PaginationSchema(BaseModel):
         cursor_path (str): The dot-notation path to extract the next cursor from the JSON response (e.g., "meta.next_token").
         cursor_query_key (str): The URL query parameter where the cursor should be injected (default: "cursor").
         stop_condition (str): Defines when pagination should cease (default: "no_data").
+        total_records_path (str): Dot-notation path to extract total record count for concurrent offset pagination.
+        max_concurrent_requests (int): Max concurrent requests for offset pagination (default: 10).
     """
     type: str
     page_key: Optional[str] = "page"
@@ -27,6 +29,8 @@ class PaginationSchema(BaseModel):
     cursor_path: Optional[str] = None
     cursor_query_key: Optional[str] = "cursor"
     stop_condition: Optional[str] = "no_data"
+    total_records_path: Optional[str] = None
+    max_concurrent_requests: Optional[int] = 10
 
 
 class ChainedRequestSchema(BaseModel):

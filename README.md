@@ -149,14 +149,18 @@ Apiphany automatically scrolls through pages until the payload is empty.
 - **`limit_key`** (`string`): Parameter name for limit (default: `"limit"`).
 - **`limit_value`** (`int`): Offset increment amount (default: 100).
 - **`stop_condition`** (`string`): Defines when to stop. `"no_data"` stops when returned array length < limit.
+- **`total_records_path`** (`string`): *(Optional)* Dot-notation path to extract total record count from the first API response (e.g., `"metadata.total_records"`). If provided with offset-based pagination, triggers massive concurrent fan-out for the remaining pages.
+- **`max_concurrent_requests`** (`int`): *(Optional)* Number of concurrent requests to spawn when `total_records_path` is triggered (default: 10).
 
-**Example (Offset Based):**
+**Example (Concurrent Offset Based):**
 ```json
 "pagination": {
     "type": "offset_based",
-    "offset_key": "start",
-    "limit_key": "limit",
-    "limit_value": 500
+    "offset_key": "$skip",
+    "limit_key": "$top",
+    "limit_value": 100,
+    "total_records_path": "metadata.total_records",
+    "max_concurrent_requests": 15
 }
 ```
 
