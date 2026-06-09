@@ -149,8 +149,8 @@ Apiphany automatically scrolls through pages until the payload is empty.
 - **`limit_key`** (`string`): Parameter name for limit (default: `"limit"`).
 - **`limit_value`** (`int`): Offset increment amount (default: 100).
 - **`stop_condition`** (`string`): Defines when to stop. `"no_data"` stops when returned array length < limit.
-- **`total_records_path`** (`string`): *(Optional)* Dot-notation path to extract total record count from the first API response (e.g., `"metadata.total_records"`). If provided with offset-based pagination, triggers massive concurrent fan-out for the remaining pages.
-- **`max_concurrent_requests`** (`int`): *(Optional)* Number of concurrent requests to spawn when `total_records_path` is triggered (default: 10).
+- **`total_records_path`** (`string`): *(Optional)* Dot-notation path to extract total record count from the first API response (e.g., `"metadata.total_records"`). If provided with offset-based pagination, triggers massive concurrent fan-out for the remaining pages. If omitted, engine uses "Speculative Windowing" to fire batches of offsets asynchronously until an empty payload or 404 is hit.
+- **`max_concurrent_requests`** (`int`): *(Optional)* Number of concurrent requests to spawn for offset-calculation or speculative batching (default: 10).
 
 **Example (Concurrent Offset Based):**
 ```json
@@ -186,7 +186,7 @@ Dynamically feeds the output of this API into another child API.
 - **`child_api_identifier`** (`string`): The `api_identifier` of the next endpoint to trigger.
 - **`key_mapping`** (`dict`): Maps parent JSON keys to child URL template parameters (e.g., `{"id": "userId"}`).
 - **`max_concurrent_requests`** (`int`): Maximum parallel threads hitting the child API (default: 5).
-- **`batch_size`** (`int`): If > 1, combines parent values into comma-separated lists (e.g. `1,2,3,4,5`).
+- **`batch_size`** (`int`): Groups multiple parent IDs into a single comma-separated child API request (e.g. `?userId=1,2,3,4,5`). Dramatically reduces the total number of API calls and limits hitting rate restrictions.
 
 **Example (Batched Child Resolution):**
 ```json
